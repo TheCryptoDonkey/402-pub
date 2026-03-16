@@ -4,10 +4,11 @@
  * Connects to multiple Nostr relays, subscribes to kind 31402 service
  * announcements, and renders them in a filterable grid.
  *
- * XSS safety: ALL strings from Nostr events are passed through escapeHtml()
- * before being inserted via innerHTML. escapeHtml() uses the browser's own
- * DOM text-node escaping (div.textContent = ...; return div.innerHTML) which
- * is the safest approach available without a library — no regex, no allow-list.
+ * XSS safety: ALL untrusted strings from Nostr events are set via
+ * .textContent on DOM elements — never innerHTML. The entire UI is built
+ * using createElement + textContent, which is inherently injection-safe.
+ * URLs from events are validated via isSafeHttpUrl() (http(s) only,
+ * no private IPs) before being assigned to href or src attributes.
  */
 
 /* ============================================================
@@ -30,6 +31,32 @@ const STORAGE_KEY = 'l402-dashboard-relays'
 const RECONNECT_MAX = 30_000
 
 /* ============================================================
+   URL Validation
+   ============================================================ */
+
+/**
+ * Returns true if the URL is a safe, publicly-routable http(s) URL.
+ * Blocks javascript:, data:, and other non-HTTP schemes.
+ * Blocks localhost, loopback, and private network addresses.
+ *
+ * @param {string} urlStr - URL string to validate
+ * @returns {boolean}
+ */
+function isSafeHttpUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+    const h = parsed.hostname
+    if (h === 'localhost' || h === '0.0.0.0' || h === '[::1]' || h === '::1') return false
+    if (h.startsWith('127.')) return false
+    if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)/.test(h)) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
+/* ============================================================
    Relay Manager
    ============================================================ */
 
@@ -47,7 +74,8 @@ function getRelayUrls() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY))
     if (Array.isArray(stored) && stored.length > 0) {
-      return [...new Set([...DEFAULT_RELAYS, ...stored])]
+      const valid = stored.filter(s => typeof s === 'string' && s.startsWith('wss://'))
+      if (valid.length > 0) return [...new Set([...DEFAULT_RELAYS, ...valid])]
     }
   } catch {
     // Ignore parse errors — fall through to defaults
@@ -150,9 +178,11 @@ let eoseCount = 0
  * @param {object} event - Raw Nostr event object
  */
 function handleEvent(event) {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return
   if (event.kind !== L402_KIND) return
+  if (!Array.isArray(event.tags)) return
 
-  const tags = event.tags || []
+  const tags = event.tags
 
   /** Returns the first value of a named tag, or undefined. */
   const getTag = (name) => tags.find(t => t[0] === name)?.[1]
@@ -168,15 +198,15 @@ function handleEvent(event) {
   // Require all four mandatory fields
   if (!dTag || !name || !url || !about) return
 
-  // Skip localhost/private URLs — these are misconfigured announcements
-  try {
-    const parsed = new URL(url)
-    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '0.0.0.0') return
-  } catch { return }
+  // Validate URL: must be http(s), not localhost/private networks
+  if (!isSafeHttpUrl(url)) return
 
-  // NIP-40: honour event expiration
+  // NIP-40: honour event expiration (NaN or missing = never expires)
   const expiration = getTag('expiration')
-  if (expiration && parseInt(expiration, 10) < Math.floor(Date.now() / 1000)) return
+  if (expiration) {
+    const exp = parseInt(expiration, 10)
+    if (Number.isFinite(exp) && exp < Math.floor(Date.now() / 1000)) return
+  }
 
   // Deduplicate: keep the most recently created version
   const key = event.pubkey + ':' + dTag
@@ -187,11 +217,14 @@ function handleEvent(event) {
   if (!existing) newlyAddedKeys.add(key)
 
   // Parse pricing tags: ['price', capability, amount, currency]
-  const pricing = getTags('price').map(t => ({
-    capability: t[1] || '',
-    price: parseFloat(t[2]) || 0,
-    currency: t[3] || 'sats',
-  }))
+  const pricing = getTags('price').map(t => {
+    const raw = parseFloat(t[2])
+    return {
+      capability: t[1] || '',
+      price: Number.isFinite(raw) && raw >= 0 ? raw : 0,
+      currency: t[3] || 'sats',
+    }
+  })
 
   // Parse payment method identifiers (pmi tags)
   const paymentMethods = getTags('pmi').map(t => t[1]).filter(Boolean)
@@ -448,7 +481,7 @@ function buildCard(s) {
   const headerLeft = document.createElement('div')
   headerLeft.className = 'card-header-left'
 
-  if (s.picture) {
+  if (s.picture && isSafeHttpUrl(s.picture)) {
     const img = document.createElement('img')
     img.src = s.picture
     img.alt = s.name + ' icon'
@@ -811,7 +844,7 @@ async function fetchExternalSources() {
 function parseSatringServices(data, sourceName) {
   const items = Array.isArray(data) ? data : []
   return items
-    .filter(s => s.name && s.url && s.status !== 'dead')
+    .filter(s => s.name && s.url && s.status !== 'dead' && isSafeHttpUrl(s.url))
     .map(s => ({
       id: 'satring-' + (s.slug || s.name),
       pubkey: '',
@@ -854,6 +887,7 @@ function parseL402DirectoryServices(data, sourceName) {
     .map(s => {
       const endpoints = s.endpoints || []
       const firstUrl = endpoints[0]?.url || s.provider?.url || ''
+      if (!isSafeHttpUrl(firstUrl)) return null
       return {
         id: 'l402dir-' + (s.service_id || s.name),
         pubkey: s.destination_pubkey || '',
@@ -878,6 +912,7 @@ function parseL402DirectoryServices(data, sourceName) {
         source: sourceName,
       }
     })
+    .filter(Boolean)
 }
 
 /* ============================================================
@@ -925,7 +960,9 @@ document.addEventListener('click', (e) => {
   if (!btn) return
 
   const url = btn.dataset.url
-  const cmd = '# Returns 402 with a Lightning invoice \u2014 pay to get an L402 token\ncurl -i ' + url + ' -H "Accept: application/json"'
+  // Single-quote the URL to prevent shell metacharacter injection when pasted
+  const safeUrl = url.replace(/'/g, "'\\''")
+  const cmd = "# Returns 402 with a Lightning invoice \u2014 pay to get an L402 token\ncurl -i '" + safeUrl + "' -H 'Accept: application/json'"
   navigator.clipboard.writeText(cmd).then(() => {
     btn.textContent = 'Copied!'
     setTimeout(() => { btn.textContent = 'Copy curl' }, 1500)
