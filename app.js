@@ -886,14 +886,16 @@ function parseL402DirectoryServices(data, sourceName) {
     .filter(s => s.name)
     .map(s => {
       const endpoints = s.endpoints || []
-      const firstUrl = endpoints[0]?.url || s.provider?.url || ''
-      if (!isSafeHttpUrl(firstUrl)) return null
+      // Pick the first safe URL from endpoints, then fall back to provider URL
+      const candidates = [...endpoints.map(e => e.url), s.provider?.url].filter(Boolean)
+      const safeUrl = candidates.find(u => isSafeHttpUrl(u))
+      if (!safeUrl) return null
       return {
         id: 'l402dir-' + (s.service_id || s.name),
         pubkey: s.destination_pubkey || '',
         identifier: (s.service_id || s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
         name: s.name,
-        url: firstUrl,
+        url: safeUrl,
         about: s.description || '',
         picture: undefined,
         pricing: endpoints
