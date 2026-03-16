@@ -52,12 +52,18 @@ function isSafeHttpUrl(urlStr) {
     // Strip brackets from IPv6 and trailing dot from FQDN for comparison
     const h = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '')
     // Loopback
-    if (h === 'localhost' || h === '0.0.0.0' || h === '::1') return false
+    if (h === 'localhost' || h === '0.0.0.0' || h === '::1' || h === '::') return false
     if (h.startsWith('127.')) return false
     // RFC 1918 + link-local IPv4
     if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)/.test(h)) return false
     // Private / link-local IPv6 (fc00::/7 unique-local, fe80::/10 link-local)
     if (/^(fc|fd|fe[89ab])/i.test(h)) return false
+    // IPv4-mapped IPv6 (::ffff:x.x.x.x) — re-check the mapped IPv4 portion
+    if (h.startsWith('::ffff:')) {
+      const mapped = h.slice(7)
+      if (mapped === '127.0.0.1' || mapped.startsWith('127.') ||
+          /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)/.test(mapped)) return false
+    }
     return true
   } catch {
     return false
@@ -82,7 +88,7 @@ function getRelayUrls() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY))
     if (Array.isArray(stored) && stored.length > 0) {
-      const valid = stored.filter(s => typeof s === 'string' && (s.startsWith('wss://') || s.startsWith('ws://')))
+      const valid = stored.filter(s => typeof s === 'string' && s.startsWith('wss://'))
       if (valid.length > 0) return [...new Set([...DEFAULT_RELAYS, ...valid])]
     }
   } catch {
@@ -499,6 +505,7 @@ function buildCard(s) {
     img.className = 'service-icon'
     img.width = 32
     img.height = 32
+    img.loading = 'lazy'
     headerLeft.appendChild(img)
   }
 
@@ -817,7 +824,10 @@ async function fetchExternalSources() {
   await Promise.allSettled(
     EXTERNAL_SOURCES.map(async (src) => {
       try {
-        const res = await fetch(src.url)
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 15_000)
+        const res = await fetch(src.url, { signal: controller.signal })
+        clearTimeout(timeout)
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
         const data = await res.json()
         const parsed = src.parse(data, src.name)
@@ -918,7 +928,7 @@ function parseL402DirectoryServices(data, sourceName) {
           }))
           .slice(0, 5),
         paymentMethods: ['bitcoin-lightning-bolt11'],
-        topics: s.categories || [],
+        topics: (s.categories || []).filter(c => typeof c === 'string'),
         capabilities: undefined,
         version: undefined,
         createdAt: s.listed_at ? Math.floor(new Date(s.listed_at).getTime() / 1000) : 0,
@@ -961,7 +971,9 @@ document.addEventListener('click', (e) => {
   const cta = e.target.closest('#cta-operator, #cta-agent')
   if (!cta) return
   e.preventDefault()
-  const target = document.querySelector(cta.getAttribute('href'))
+  const href = cta.getAttribute('href')
+  if (!href || !href.startsWith('#')) return
+  const target = document.getElementById(href.slice(1))
   if (!target) return
   const behaviour = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
   target.scrollIntoView({ behavior: behaviour })
