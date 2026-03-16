@@ -52,7 +52,7 @@ function isSafeHttpUrl(urlStr) {
     // Strip brackets from IPv6 and trailing dot from FQDN for comparison
     const h = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '')
     // Loopback
-    if (h === 'localhost' || h === '0.0.0.0' || h === '::1' || h === '::') return false
+    if (h === 'localhost' || h === '0.0.0.0' || h === '0' || h === '::1' || h === '::') return false
     if (h.startsWith('127.')) return false
     // RFC 1918 + link-local IPv4
     if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)/.test(h)) return false
@@ -833,6 +833,9 @@ async function fetchExternalSources() {
         const parsed = src.parse(data, src.name)
         let added = 0
         parsed.forEach(svc => {
+          // Respect MAX_SERVICES cap for external sources too
+          if (services.size >= MAX_SERVICES) return
+
           // Only add if no Nostr self-announced version exists for this URL
           const existingByUrl = [...services.values()].find(
             s => s.url === svc.url && s.source === 'nostr'
@@ -985,8 +988,8 @@ document.addEventListener('click', (e) => {
   if (!btn) return
 
   const url = btn.dataset.url
-  // Single-quote the URL to prevent shell metacharacter injection when pasted
-  const safeUrl = url.replace(/'/g, "'\\''")
+  // Strip control characters and single-quote the URL to prevent shell injection
+  const safeUrl = url.replace(/[\x00-\x1f\x7f]/g, '').replace(/'/g, "'\\''")
   const cmd = "# Returns 402 with a Lightning invoice \u2014 pay to get an L402 token\ncurl -i '" + safeUrl + "' -H 'Accept: application/json'"
   navigator.clipboard.writeText(cmd).then(() => {
     btn.textContent = 'Copied!'
