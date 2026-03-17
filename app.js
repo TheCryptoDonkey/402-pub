@@ -1085,6 +1085,12 @@ function updateHealthDots() {
       const up = await checkServiceHealth(url)
       dot.className = 'health-dot ' + (up ? 'health-up' : 'health-down')
       dot.title = up ? 'Responding' : 'Not responding'
+      // Dim the entire card when the service is down.
+      if (up) {
+        card.classList.remove('service-down')
+      } else {
+        card.classList.add('service-down')
+      }
     }, i * 200) // Stagger by 200ms per service
   })
 }
