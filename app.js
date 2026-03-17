@@ -340,6 +340,7 @@ function handleEvent(event) {
     eventSource,
     verified,
     status: status || 'active',
+    transports: detectTransports(url),
   })
 
   renderServices()
@@ -368,6 +369,7 @@ let activePaymentFilters = new Set()
 let activeTopicFilters = new Set()
 let activeRailFilter = 'all'   // 'all', 'l402', 'x402', 'cashu'
 let activeTierFilter = 'all'   // 'all', 'self', 'discovered'
+let activeTransportFilter = 'all' // 'all', 'https', 'http', 'onion', 'hns'
 
 /**
  * Rebuilds the relay status row in the header.
@@ -461,6 +463,13 @@ function renderServices() {
   // Apply trust tier filter
   if (activeTierFilter !== 'all') {
     filtered = filtered.filter(s => (s.trustTier || TIER_SELF) === activeTierFilter)
+  }
+
+  // Apply transport filter
+  if (activeTransportFilter !== 'all') {
+    filtered = filtered.filter(s =>
+      s.transports && s.transports.includes(activeTransportFilter)
+    )
   }
 
   // Apply payment method filters (AND logic — must have all selected)
@@ -728,11 +737,12 @@ function buildCard(s) {
     article.appendChild(pricingRow)
   }
 
-  // --- Meta row: payment methods + topics ---
+  // --- Meta row: payment methods + transport badges + topics ---
   const hasPayments = s.paymentMethods.length > 0
   const hasTopics = s.topics.length > 0
+  const hasTransports = s.transports && s.transports.length > 0
 
-  if (hasPayments || hasTopics) {
+  if (hasPayments || hasTopics || hasTransports) {
     const meta = document.createElement('div')
     meta.className = 'card-meta'
 
@@ -745,7 +755,16 @@ function buildCard(s) {
       })
     }
 
-    if (hasPayments && hasTopics) {
+    if (hasTransports) {
+      s.transports.forEach(t => {
+        const badge = document.createElement('span')
+        badge.className = 'badge transport transport-' + t
+        badge.textContent = formatTransport(t)
+        meta.appendChild(badge)
+      })
+    }
+
+    if ((hasPayments || hasTransports) && hasTopics) {
       const sep = document.createElement('span')
       sep.className = 'meta-sep'
       sep.setAttribute('aria-hidden', 'true')
@@ -857,6 +876,27 @@ function renderFilterPills(allServices) {
     activeTierFilter,
     'tier'
   )
+
+  // Transport filter row — only show options that have at least one service
+  const allTransports = [...new Set(allServices.flatMap(s => s.transports || []))]
+  const transportOptions = [{ value: 'all', label: 'All Transports' }]
+  ;['https', 'http', 'onion', 'hns'].forEach(t => {
+    if (allTransports.includes(t)) {
+      transportOptions.push({ value: t, label: formatTransport(t) })
+    }
+  })
+  // Only render transport filter if there are at least 2 distinct transports
+  if (allTransports.length >= 2) {
+    buildExclusivePillGroup(
+      document.getElementById('transport-filters'),
+      transportOptions,
+      activeTransportFilter,
+      'transport'
+    )
+  } else {
+    const transportContainer = document.getElementById('transport-filters')
+    if (transportContainer) transportContainer.textContent = ''
+  }
 
   buildPillGroup(
     document.getElementById('payment-filters'),
@@ -970,6 +1010,73 @@ function getTimeAgo(timestamp) {
   if (seconds < 86400)  return Math.floor(seconds / 3600) + 'h ago'
   if (seconds < 604800) return Math.floor(seconds / 86400) + 'd ago'
   return new Date(timestamp * 1000).toLocaleDateString()
+}
+
+/* ============================================================
+   Transport Detection
+   ============================================================ */
+
+/**
+ * Known Handshake TLDs — non-ICANN top-level domains used on the
+ * Handshake naming system. This list covers the most common ones.
+ */
+const HNS_TLDS = new Set([
+  'hns', 'c', 'd', 'nb', 'p', 'ix', 'forever', 'x', 'badass',
+])
+
+/**
+ * Detects the transport type(s) for a service URL.
+ * Returns an array of transport identifiers.
+ *
+ * @param {string} urlStr - Service URL
+ * @returns {string[]} Transport identifiers: 'https', 'http', 'onion', 'hns'
+ */
+function detectTransports(urlStr) {
+  const transports = []
+  try {
+    const parsed = new URL(urlStr)
+    const hostname = parsed.hostname.toLowerCase()
+
+    // Onion check first — .onion domains may use http or https
+    if (hostname.endsWith('.onion')) {
+      transports.push('onion')
+      return transports
+    }
+
+    // Handshake check — non-ICANN TLDs
+    const parts = hostname.split('.')
+    const tld = parts[parts.length - 1]
+    if (tld && HNS_TLDS.has(tld)) {
+      transports.push('hns')
+      return transports
+    }
+
+    // Standard HTTP/HTTPS
+    if (parsed.protocol === 'https:') {
+      transports.push('https')
+    } else if (parsed.protocol === 'http:') {
+      transports.push('http')
+    }
+  } catch {
+    // Invalid URL — no transports
+  }
+  return transports
+}
+
+/**
+ * Maps a transport identifier to a short display label.
+ *
+ * @param {string} transport - Transport identifier
+ * @returns {string} Human-readable label
+ */
+function formatTransport(transport) {
+  switch (transport) {
+    case 'https': return 'HTTPS'
+    case 'http':  return 'HTTP'
+    case 'onion': return 'Tor'
+    case 'hns':   return 'HNS'
+    default:      return transport
+  }
 }
 
 /* ============================================================
@@ -1364,6 +1471,7 @@ function parseSatringServices(data, sourceName) {
         eventSource: 'directory',
         verified: undefined,
         status: 'active',
+        transports: detectTransports(s.url),
       }
     })
 }
@@ -1413,6 +1521,7 @@ function parseL402DirectoryServices(data, sourceName) {
         eventSource: 'directory',
         verified: undefined,
         status: 'active',
+        transports: detectTransports(safeUrl),
       }
     })
     .filter(Boolean)
@@ -1465,6 +1574,11 @@ document.addEventListener('click', (e) => {
   }
   if (filter === 'tier') {
     activeTierFilter = value
+    renderServices()
+    return
+  }
+  if (filter === 'transport') {
+    activeTransportFilter = value
     renderServices()
     return
   }
@@ -1605,6 +1719,7 @@ function updateHealthDots() {
 /**
  * Updates the hero stat pills with live counts from the service store.
  * Called after every renderServices() to keep hero stats in sync.
+ * Also syncs the active/inactive visual state for clickable rail stats.
  */
 function updateHeroStats() {
   const allServices = [...services.values()]
@@ -1640,7 +1755,65 @@ function updateHeroStats() {
     lastUpdatedEl.textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     lastUpdatedEl.title = new Date().toISOString()
   }
+
+  // Sync active state on clickable hero stat pills
+  const railStatMap = {
+    'hero-stat-l402': 'l402',
+    'hero-stat-x402': 'x402',
+    'hero-stat-cashu': 'cashu',
+  }
+  Object.entries(railStatMap).forEach(([id, rail]) => {
+    const el = document.getElementById(id)
+    if (!el) return
+    if (activeRailFilter === rail) {
+      el.classList.add('hero-stat-active')
+      el.setAttribute('aria-pressed', 'true')
+    } else {
+      el.classList.remove('hero-stat-active')
+      el.setAttribute('aria-pressed', 'false')
+    }
+  })
 }
+
+/* ============================================================
+   Hero Stat Click Handlers — Clickable Rail Filters
+   ============================================================ */
+
+/**
+ * Makes the L402, x402, and Cashu hero stat pills clickable.
+ * Clicking a stat toggles the rail filter to show only services
+ * using that payment rail. Clicking again deselects (shows all).
+ * Syncs with the existing rail filter pills in the toolbar.
+ */
+;(function initHeroStatClicks() {
+  const railStatMap = {
+    'hero-stat-l402': 'l402',
+    'hero-stat-x402': 'x402',
+    'hero-stat-cashu': 'cashu',
+  }
+
+  Object.entries(railStatMap).forEach(([id, rail]) => {
+    const el = document.getElementById(id)
+    if (!el) return
+    el.setAttribute('role', 'button')
+    el.setAttribute('tabindex', '0')
+    el.setAttribute('aria-pressed', 'false')
+
+    const activate = () => {
+      // Toggle: if already selected, deselect (show all)
+      activeRailFilter = activeRailFilter === rail ? 'all' : rail
+      renderServices()
+    }
+
+    el.addEventListener('click', activate)
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        activate()
+      }
+    })
+  })
+})()
 
 /* ============================================================
    Initialise
