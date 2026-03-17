@@ -956,6 +956,25 @@ document.getElementById('search').addEventListener('input', (e) => {
   renderServices()
 })
 
+// Mobile filter toggle — inject button before the filter pills
+;(function injectFilterToggle() {
+  const toolbar = document.querySelector('.toolbar-filters')
+  if (!toolbar) return
+  const btn = document.createElement('button')
+  btn.className = 'filter-toggle'
+  btn.textContent = 'Filters'
+  btn.setAttribute('aria-expanded', 'false')
+  btn.addEventListener('click', () => {
+    const pills = toolbar.querySelectorAll('.filter-pills')
+    const showing = pills[0] && pills[0].classList.contains('show-mobile')
+    pills.forEach(p => p.classList.toggle('show-mobile', !showing))
+    btn.classList.toggle('active', !showing)
+    btn.setAttribute('aria-expanded', String(!showing))
+    btn.textContent = showing ? 'Filters' : 'Hide filters'
+  })
+  toolbar.insertBefore(btn, toolbar.querySelector('.filter-pills'))
+})()
+
 // Delegated click handler for filter pills (payment + topic)
 // Pills are matched by data-filter attribute, set during buildPillGroup.
 document.addEventListener('click', (e) => {
