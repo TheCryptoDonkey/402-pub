@@ -46,6 +46,25 @@ const TIER_DISCOVERED = 'discovered'
 const TIER_STALE = 'stale'
 
 /* ============================================================
+   PMI Normalisation (backward compatibility)
+   ============================================================ */
+
+/**
+ * Normalises legacy payment method identifiers to the current format.
+ * Old Nostr events on relays still use the long-form identifiers;
+ * this maps them to the short identifiers the UI expects.
+ *
+ * @param {string} raw - Raw pmi tag value
+ * @returns {string} Normalised identifier
+ */
+function normalisePmi(raw) {
+  if (raw === 'bitcoin-lightning-bolt11') return 'l402'
+  if (raw === 'bitcoin-cashu-xcashu') return 'xcashu'
+  if (raw === 'bitcoin-cashu') return 'cashu'
+  return raw
+}
+
+/* ============================================================
    URL Validation
    ============================================================ */
 
@@ -260,12 +279,16 @@ function handleEvent(event) {
   })
 
   // Parse payment method identifiers (pmi tags)
-  // Supports both old format ["pmi", "bitcoin-lightning-bolt11"] and
-  // new structured format ["pmi", "l402", "lightning"]
+  // Normalise legacy identifiers (e.g. 'bitcoin-lightning-bolt11' → 'l402')
+  // so stats, filters, and display all work consistently.
   const pmiTags = getTags('pmi')
-  const paymentMethods = pmiTags.map(t => t[1]).filter(Boolean)
-  // Store full pmi tag arrays for detail view (rail-specific fields)
-  const paymentMethodDetails = pmiTags.map(t => t.slice(1)).filter(a => a.length > 0)
+  const paymentMethods = pmiTags.map(t => normalisePmi(t[1])).filter(Boolean)
+  // Store full pmi tag arrays for detail view (rail-specific fields),
+  // with the rail identifier (first element) normalised.
+  const paymentMethodDetails = pmiTags
+    .map(t => t.slice(1))
+    .filter(a => a.length > 0)
+    .map(parts => [normalisePmi(parts[0]), ...parts.slice(1)])
 
   // Parse topic tags
   const topics = getTags('t').map(t => t[1]).filter(Boolean)
@@ -910,12 +933,13 @@ function buildPillGroup(container, values, activeSet, filterType, labelFn) {
  * @returns {string} Short label (e.g. 'L402', 'x402', 'Cashu', 'xCashu')
  */
 function formatPaymentMethod(m) {
-  switch (m) {
+  const n = normalisePmi(m)
+  switch (n) {
     case 'l402':   return 'L402'
     case 'x402':   return 'x402'
     case 'cashu':  return 'Cashu'
     case 'xcashu': return 'xCashu'
-    default:       return m
+    default:       return n
   }
 }
 
@@ -977,7 +1001,8 @@ function getTimeAgoISO(isoStr) {
  */
 function formatPaymentMethodDetail(pmiParts) {
   if (!pmiParts || pmiParts.length === 0) return 'Unknown'
-  const rail = pmiParts[0]
+  // Normalise the rail identifier (first element) for backward compatibility
+  const rail = normalisePmi(pmiParts[0])
   switch (rail) {
     case 'l402':
       return 'L402 (Lightning)'
@@ -992,10 +1017,6 @@ function formatPaymentMethodDetail(pmiParts) {
     case 'cashu':
       return 'Cashu'
     case 'xcashu':
-      return 'xCashu'
-    case 'bitcoin-lightning-bolt11':
-      return 'L402 (Lightning)'
-    case 'bitcoin-cashu-xcashu':
       return 'xCashu'
     default:
       return rail
@@ -1592,10 +1613,10 @@ function updateHeroStats() {
   const serviceCountEl = document.getElementById('hero-service-count')
   if (serviceCountEl) serviceCountEl.textContent = allServices.length
 
-  // Payment rails breakdown
-  const l402Count = allServices.filter(s => s.paymentMethods.includes('l402') || s.paymentMethods.includes('bitcoin-lightning-bolt11')).length
+  // Payment rails breakdown (pmi values are already normalised at parse time)
+  const l402Count = allServices.filter(s => s.paymentMethods.includes('l402')).length
   const x402Count = allServices.filter(s => s.paymentMethods.includes('x402')).length
-  const cashuCount = allServices.filter(s => s.paymentMethods.includes('cashu') || s.paymentMethods.includes('xcashu') || s.paymentMethods.includes('bitcoin-cashu-xcashu')).length
+  const cashuCount = allServices.filter(s => s.paymentMethods.includes('cashu') || s.paymentMethods.includes('xcashu')).length
 
   const l402CountEl = document.getElementById('hero-l402-count')
   if (l402CountEl) l402CountEl.textContent = l402Count
