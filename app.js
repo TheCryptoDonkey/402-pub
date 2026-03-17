@@ -33,6 +33,18 @@ const RECONNECT_MAX = 30_000
 /** Maximum number of services to store (prevents memory exhaustion from relay flood) */
 const MAX_SERVICES = 500
 
+/** 402.pub indexer pubkey — events from this key are "discovered", not self-announced */
+const INDEXER_PUBKEY = '7ff69c072127407d7b56712c407e6a95cababdb8c934e49aef869f08b238d898'
+
+/**
+ * Trust tier constants.
+ * Services are classified by origin into three tiers that control
+ * display prominence, sort order, and filtering.
+ */
+const TIER_SELF = 'self'
+const TIER_DISCOVERED = 'discovered'
+const TIER_STALE = 'stale'
+
 /* ============================================================
    URL Validation
    ============================================================ */
@@ -248,10 +260,30 @@ function handleEvent(event) {
   })
 
   // Parse payment method identifiers (pmi tags)
-  const paymentMethods = getTags('pmi').map(t => t[1]).filter(Boolean)
+  // Supports both old format ["pmi", "bitcoin-lightning-bolt11"] and
+  // new structured format ["pmi", "l402", "lightning"]
+  const pmiTags = getTags('pmi')
+  const paymentMethods = pmiTags.map(t => t[1]).filter(Boolean)
+  // Store full pmi tag arrays for detail view (rail-specific fields)
+  const paymentMethodDetails = pmiTags.map(t => t.slice(1)).filter(a => a.length > 0)
 
   // Parse topic tags
   const topics = getTags('t').map(t => t[1]).filter(Boolean)
+
+  // Parse trust/discovery tags
+  const eventSource = getTag('source')       // 'crawl', 'github', 'submit', 'self'
+  const verified = getTag('verified')         // ISO timestamp of last health check
+  const status = getTag('status')             // 'active', 'stale', 'unreachable'
+
+  // Determine trust tier
+  let trustTier
+  if (status === 'stale' || status === 'unreachable') {
+    trustTier = TIER_STALE
+  } else if (event.pubkey === INDEXER_PUBKEY) {
+    trustTier = TIER_DISCOVERED
+  } else {
+    trustTier = TIER_SELF
+  }
 
   // Optionally parse JSON content for capabilities + version
   let capabilities, version
@@ -275,11 +307,16 @@ function handleEvent(event) {
     picture: getTag('picture'),
     pricing,
     paymentMethods,
+    paymentMethodDetails,
     topics,
     capabilities,
     version,
     createdAt: event.created_at,
     source: 'nostr',
+    trustTier,
+    eventSource,
+    verified,
+    status: status || 'active',
   })
 
   renderServices()
@@ -306,6 +343,8 @@ function handleEose(url) {
 let searchQuery = ''
 let activePaymentFilters = new Set()
 let activeTopicFilters = new Set()
+let activeRailFilter = 'all'   // 'all', 'l402', 'x402', 'cashu'
+let activeTierFilter = 'all'   // 'all', 'self', 'discovered'
 
 /**
  * Rebuilds the relay status row in the header.
@@ -391,6 +430,16 @@ function renderServices() {
     )
   }
 
+  // Apply payment rail filter (top-level rail buttons)
+  if (activeRailFilter !== 'all') {
+    filtered = filtered.filter(s => s.paymentMethods.includes(activeRailFilter))
+  }
+
+  // Apply trust tier filter
+  if (activeTierFilter !== 'all') {
+    filtered = filtered.filter(s => (s.trustTier || TIER_SELF) === activeTierFilter)
+  }
+
   // Apply payment method filters (AND logic — must have all selected)
   if (activePaymentFilters.size > 0) {
     filtered = filtered.filter(s =>
@@ -405,8 +454,14 @@ function renderServices() {
     )
   }
 
-  // Sort by most recently announced first
-  filtered.sort((a, b) => b.createdAt - a.createdAt)
+  // Sort: self-announced first, then discovered, then stale. Within each tier, by recency.
+  const tierOrder = { [TIER_SELF]: 0, [TIER_DISCOVERED]: 1, [TIER_STALE]: 2 }
+  filtered.sort((a, b) => {
+    const ta = tierOrder[a.trustTier || TIER_SELF] ?? 1
+    const tb = tierOrder[b.trustTier || TIER_SELF] ?? 1
+    if (ta !== tb) return ta - tb
+    return b.createdAt - a.createdAt
+  })
 
   // Update service count in toolbar (with bounce animation on change)
   const nostrCount = allServices.filter(s => s.source === 'nostr').length
@@ -492,8 +547,10 @@ function renderServices() {
  * @returns {HTMLElement} The constructed article element
  */
 function buildCard(s) {
+  const tier = s.trustTier || TIER_SELF
   const article = document.createElement('article')
-  article.className = 'service-card'
+  article.className = 'service-card' + (tier === TIER_STALE ? ' service-stale' : '')
+  article.dataset.serviceKey = s.pubkey + ':' + s.identifier
 
   // --- Header row ---
   const header = document.createElement('div')
@@ -532,10 +589,45 @@ function buildCard(s) {
   const headerRight = document.createElement('div')
   headerRight.className = 'card-header-right'
 
-  const sourceBadge = document.createElement('span')
-  sourceBadge.className = 'badge source source-' + (s.source === 'nostr' ? 'nostr' : 'indexed')
-  sourceBadge.textContent = s.source === 'nostr' ? 'Self-announced' : 'Indexed via ' + s.source
-  headerRight.appendChild(sourceBadge)
+  // Trust tier badge
+  const tierBadge = document.createElement('span')
+  if (tier === TIER_DISCOVERED) {
+    tierBadge.className = 'badge source source-discovered'
+    const label = 'Discovered by 402.pub'
+    if (s.verified) {
+      tierBadge.textContent = label
+      tierBadge.title = 'Last verified: ' + s.verified
+    } else {
+      tierBadge.textContent = label
+    }
+    headerRight.appendChild(tierBadge)
+
+    if (s.verified) {
+      const verifiedSpan = document.createElement('span')
+      verifiedSpan.className = 'verified-time'
+      verifiedSpan.textContent = 'Verified ' + getTimeAgoISO(s.verified)
+      verifiedSpan.title = s.verified
+      headerRight.appendChild(verifiedSpan)
+    }
+  } else if (tier === TIER_STALE) {
+    tierBadge.className = 'badge source source-stale'
+    tierBadge.textContent = s.status === 'unreachable' ? 'Unreachable' : 'Stale'
+    headerRight.appendChild(tierBadge)
+
+    if (s.verified) {
+      const lastSeen = document.createElement('span')
+      lastSeen.className = 'verified-time stale-time'
+      lastSeen.textContent = 'Last seen ' + getTimeAgoISO(s.verified)
+      lastSeen.title = s.verified
+      headerRight.appendChild(lastSeen)
+    }
+  } else if (s.source !== 'nostr') {
+    // External directory source
+    tierBadge.className = 'badge source source-indexed'
+    tierBadge.textContent = 'Indexed via ' + s.source
+    headerRight.appendChild(tierBadge)
+  }
+  // Self-announced services: no qualifier badge (they are first-class)
 
   const timestampSpan = document.createElement('span')
   timestampSpan.className = 'timestamp'
@@ -653,6 +745,15 @@ function buildCard(s) {
   const actions = document.createElement('div')
   actions.className = 'card-actions'
 
+  const detailBtn = document.createElement('button')
+  detailBtn.className = 'btn-action btn-detail'
+  detailBtn.textContent = 'Details'
+  detailBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    showServiceDetail(s)
+  })
+  actions.appendChild(detailBtn)
+
   const visitBtn = document.createElement('a')
   visitBtn.href = s.url
   visitBtn.target = '_blank'
@@ -699,6 +800,7 @@ function buildCard(s) {
 /**
  * Rebuilds payment method and topic filter pill rows based on the
  * full set of available services (not the filtered subset).
+ * Also rebuilds the rail filter and trust tier filter rows.
  * Pills are built with DOM methods to avoid any injection risk from
  * payment method strings sourced from Nostr events.
  *
@@ -707,6 +809,31 @@ function buildCard(s) {
 function renderFilterPills(allServices) {
   const allPayments = [...new Set(allServices.flatMap(s => s.paymentMethods))].sort()
   const allTopics   = [...new Set(allServices.flatMap(s => s.topics))].sort()
+
+  // Rail filter row
+  buildExclusivePillGroup(
+    document.getElementById('rail-filters'),
+    [
+      { value: 'all', label: 'All Rails' },
+      { value: 'l402', label: 'L402' },
+      { value: 'x402', label: 'x402' },
+      { value: 'cashu', label: 'Cashu' },
+    ],
+    activeRailFilter,
+    'rail'
+  )
+
+  // Trust tier filter row
+  buildExclusivePillGroup(
+    document.getElementById('tier-filters'),
+    [
+      { value: 'all', label: 'All Sources' },
+      { value: TIER_SELF, label: 'Self-announced' },
+      { value: TIER_DISCOVERED, label: 'Discovered' },
+    ],
+    activeTierFilter,
+    'tier'
+  )
 
   buildPillGroup(
     document.getElementById('payment-filters'),
@@ -723,6 +850,29 @@ function renderFilterPills(allServices) {
     'topic',
     t => t
   )
+}
+
+/**
+ * Builds an exclusive (radio-style) pill group where only one can be active.
+ *
+ * @param {HTMLElement} container
+ * @param {Array<{value: string, label: string}>} options
+ * @param {string} activeValue
+ * @param {string} filterType
+ */
+function buildExclusivePillGroup(container, options, activeValue, filterType) {
+  if (!container) return
+  container.textContent = ''
+
+  options.forEach(opt => {
+    const btn = document.createElement('button')
+    btn.className = 'pill' + (activeValue === opt.value ? ' active' : '')
+    btn.dataset.filter = filterType
+    btn.dataset.value = opt.value
+    btn.setAttribute('aria-pressed', String(activeValue === opt.value))
+    btn.textContent = opt.label
+    container.appendChild(btn)
+  })
 }
 
 /**
@@ -796,6 +946,293 @@ function getTimeAgo(timestamp) {
   if (seconds < 86400)  return Math.floor(seconds / 3600) + 'h ago'
   if (seconds < 604800) return Math.floor(seconds / 86400) + 'd ago'
   return new Date(timestamp * 1000).toLocaleDateString()
+}
+
+/* ============================================================
+   Trust Tier & Rail Filter UI
+   ============================================================ */
+
+/**
+ * Returns a human-friendly relative time string for an ISO timestamp string.
+ *
+ * @param {string} isoStr - ISO 8601 timestamp
+ * @returns {string} e.g. 'just now', '5m ago', '2h ago', '3d ago'
+ */
+function getTimeAgoISO(isoStr) {
+  try {
+    const ts = Math.floor(new Date(isoStr).getTime() / 1000)
+    if (!Number.isFinite(ts)) return isoStr
+    return getTimeAgo(ts)
+  } catch {
+    return isoStr
+  }
+}
+
+/**
+ * Maps a payment method identifier to a human-readable label with
+ * additional detail for the service detail modal.
+ *
+ * @param {string[]} pmiParts - pmi tag elements (e.g. ['l402', 'lightning'] or ['x402', 'base', 'usdc', '0x...'])
+ * @returns {string} Human-readable description
+ */
+function formatPaymentMethodDetail(pmiParts) {
+  if (!pmiParts || pmiParts.length === 0) return 'Unknown'
+  const rail = pmiParts[0]
+  switch (rail) {
+    case 'l402':
+      return 'L402 (Lightning)'
+    case 'x402': {
+      const network = pmiParts[1] || ''
+      const asset = pmiParts[2] || ''
+      const parts = ['x402']
+      if (network) parts.push(network.charAt(0).toUpperCase() + network.slice(1))
+      if (asset) parts.push(asset.toUpperCase())
+      return parts.join(' / ')
+    }
+    case 'cashu':
+      return 'Cashu'
+    case 'xcashu':
+      return 'xCashu'
+    case 'bitcoin-lightning-bolt11':
+      return 'L402 (Lightning)'
+    case 'bitcoin-cashu-xcashu':
+      return 'xCashu'
+    default:
+      return rail
+  }
+}
+
+/**
+ * Returns a trust tier label for display.
+ *
+ * @param {object} s - Service object
+ * @returns {string}
+ */
+function getTierLabel(s) {
+  const tier = s.trustTier || TIER_SELF
+  if (tier === TIER_STALE) return s.status === 'unreachable' ? 'Unreachable' : 'Stale'
+  if (tier === TIER_DISCOVERED) return 'Discovered by 402.pub'
+  if (s.source !== 'nostr') return 'Indexed via ' + s.source
+  return 'Self-announced'
+}
+
+/* ============================================================
+   Service Detail Modal
+   ============================================================ */
+
+/**
+ * Shows a modal with full service details.
+ * Built entirely with DOM methods (no innerHTML) for XSS safety.
+ *
+ * @param {object} s - Service object
+ */
+function showServiceDetail(s) {
+  // Remove any existing modal
+  const existing = document.getElementById('service-modal')
+  if (existing) existing.remove()
+
+  const overlay = document.createElement('div')
+  overlay.id = 'service-modal'
+  overlay.className = 'modal-overlay'
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove()
+  })
+
+  const modal = document.createElement('div')
+  modal.className = 'modal-content'
+
+  // Close button
+  const closeBtn = document.createElement('button')
+  closeBtn.className = 'modal-close'
+  closeBtn.textContent = '\u00d7'
+  closeBtn.setAttribute('aria-label', 'Close')
+  closeBtn.addEventListener('click', () => overlay.remove())
+  modal.appendChild(closeBtn)
+
+  // Service name
+  const title = document.createElement('h2')
+  title.className = 'modal-title'
+  const atIdx = s.name.indexOf(' @ ')
+  title.textContent = atIdx > 0 ? s.name.slice(0, atIdx) : s.name
+  modal.appendChild(title)
+
+  // URL
+  if (s.url) {
+    const urlLink = document.createElement('a')
+    urlLink.href = s.url
+    urlLink.target = '_blank'
+    urlLink.rel = 'noopener noreferrer'
+    urlLink.className = 'modal-url'
+    urlLink.textContent = s.url
+    modal.appendChild(urlLink)
+  }
+
+  // Description
+  if (s.about) {
+    const desc = document.createElement('p')
+    desc.className = 'modal-desc'
+    desc.textContent = s.about
+    modal.appendChild(desc)
+  }
+
+  // --- Discovery info section ---
+  const discoverySection = document.createElement('div')
+  discoverySection.className = 'modal-section'
+
+  const discoveryTitle = document.createElement('h3')
+  discoveryTitle.textContent = 'Discovery'
+  discoverySection.appendChild(discoveryTitle)
+
+  const discoveryGrid = document.createElement('div')
+  discoveryGrid.className = 'modal-info-grid'
+
+  const addInfoRow = (label, value, container) => {
+    const row = document.createElement('div')
+    row.className = 'modal-info-row'
+    const labelEl = document.createElement('span')
+    labelEl.className = 'modal-info-label'
+    labelEl.textContent = label
+    const valueEl = document.createElement('span')
+    valueEl.className = 'modal-info-value'
+    valueEl.textContent = value
+    row.appendChild(labelEl)
+    row.appendChild(valueEl)
+    container.appendChild(row)
+  }
+
+  addInfoRow('Trust tier', getTierLabel(s), discoveryGrid)
+  if (s.eventSource) addInfoRow('Source', s.eventSource, discoveryGrid)
+  if (s.verified) addInfoRow('Last verified', s.verified, discoveryGrid)
+  if (s.status && s.status !== 'active') addInfoRow('Status', s.status, discoveryGrid)
+  addInfoRow('Announced', new Date(s.createdAt * 1000).toISOString(), discoveryGrid)
+  if (s.pubkey) addInfoRow('Pubkey', s.pubkey, discoveryGrid)
+  if (s.version) addInfoRow('Version', s.version, discoveryGrid)
+
+  discoverySection.appendChild(discoveryGrid)
+  modal.appendChild(discoverySection)
+
+  // --- Capabilities / Pricing section ---
+  if (s.pricing && s.pricing.length > 0) {
+    const pricingSection = document.createElement('div')
+    pricingSection.className = 'modal-section'
+
+    const pricingTitle = document.createElement('h3')
+    pricingTitle.textContent = 'Capabilities & Pricing'
+    pricingSection.appendChild(pricingTitle)
+
+    const table = document.createElement('table')
+    table.className = 'modal-pricing-table'
+
+    const thead = document.createElement('thead')
+    const headerRow = document.createElement('tr')
+    ;['Capability', 'Price', 'Currency'].forEach(h => {
+      const th = document.createElement('th')
+      th.textContent = h
+      headerRow.appendChild(th)
+    })
+    thead.appendChild(headerRow)
+    table.appendChild(thead)
+
+    const tbody = document.createElement('tbody')
+    s.pricing.forEach(p => {
+      const tr = document.createElement('tr')
+      const tdCap = document.createElement('td')
+      tdCap.textContent = formatCapability(p.capability)
+      const tdPrice = document.createElement('td')
+      tdPrice.className = 'price-cell'
+      tdPrice.textContent = p.price
+      const tdCurrency = document.createElement('td')
+      tdCurrency.textContent = p.currency
+      tr.appendChild(tdCap)
+      tr.appendChild(tdPrice)
+      tr.appendChild(tdCurrency)
+      tbody.appendChild(tr)
+    })
+    table.appendChild(tbody)
+    pricingSection.appendChild(table)
+    modal.appendChild(pricingSection)
+  }
+
+  // Expanded capabilities from content JSON
+  if (s.capabilities && typeof s.capabilities === 'object') {
+    const capsSection = document.createElement('div')
+    capsSection.className = 'modal-section'
+
+    const capsTitle = document.createElement('h3')
+    capsTitle.textContent = 'Capability Details'
+    capsSection.appendChild(capsTitle)
+
+    const capsCode = document.createElement('pre')
+    capsCode.className = 'modal-caps-json'
+    const codeEl = document.createElement('code')
+    codeEl.textContent = JSON.stringify(s.capabilities, null, 2)
+    capsCode.appendChild(codeEl)
+    capsSection.appendChild(capsCode)
+    modal.appendChild(capsSection)
+  }
+
+  // --- Payment methods section ---
+  if ((s.paymentMethodDetails && s.paymentMethodDetails.length > 0) || s.paymentMethods.length > 0) {
+    const paySection = document.createElement('div')
+    paySection.className = 'modal-section'
+
+    const payTitle = document.createElement('h3')
+    payTitle.textContent = 'Payment Methods'
+    paySection.appendChild(payTitle)
+
+    const payList = document.createElement('div')
+    payList.className = 'modal-payment-list'
+
+    const details = s.paymentMethodDetails && s.paymentMethodDetails.length > 0
+      ? s.paymentMethodDetails
+      : s.paymentMethods.map(m => [m])
+
+    details.forEach(parts => {
+      const badge = document.createElement('span')
+      badge.className = 'badge payment modal-payment-badge'
+      badge.textContent = formatPaymentMethodDetail(parts)
+      payList.appendChild(badge)
+    })
+
+    paySection.appendChild(payList)
+    modal.appendChild(paySection)
+  }
+
+  // --- Topics ---
+  if (s.topics && s.topics.length > 0) {
+    const topicSection = document.createElement('div')
+    topicSection.className = 'modal-section'
+
+    const topicTitle = document.createElement('h3')
+    topicTitle.textContent = 'Topics'
+    topicSection.appendChild(topicTitle)
+
+    const topicList = document.createElement('div')
+    topicList.className = 'modal-topic-list'
+    s.topics.forEach(t => {
+      const badge = document.createElement('span')
+      badge.className = 'badge topic'
+      badge.textContent = t
+      topicList.appendChild(badge)
+    })
+    topicSection.appendChild(topicList)
+    modal.appendChild(topicSection)
+  }
+
+  overlay.appendChild(modal)
+  document.body.appendChild(overlay)
+
+  // Focus the close button for keyboard users
+  closeBtn.focus()
+
+  // Close on Escape
+  const handleEsc = (e) => {
+    if (e.key === 'Escape') {
+      overlay.remove()
+      document.removeEventListener('keydown', handleEsc)
+    }
+  }
+  document.addEventListener('keydown', handleEsc)
 }
 
 /* ============================================================
@@ -877,31 +1314,37 @@ function parseSatringServices(data, sourceName) {
   const items = Array.isArray(data) ? data : []
   return items
     .filter(s => s.name && s.url && s.status !== 'dead' && isSafeHttpUrl(s.url))
-    .map(s => ({
-      id: 'satring-' + (s.slug || s.name),
-      pubkey: '',
-      identifier: s.slug || s.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      name: s.name,
-      url: s.url,
-      about: s.description || '',
-      picture: s.logo_url || undefined,
-      pricing: (s.endpoints || [])
-        .filter(e => e.pricing)
-        .map(e => ({
-          capability: e.method + ' ' + (e.url || '').split('?')[0],
-          price: e.pricing?.amount || 0,
-          currency: e.pricing?.currency || 'sats',
-        }))
-        .slice(0, 5),
-      paymentMethods: s.protocol === 'X402'
-        ? ['x402']
-        : ['l402'],
-      topics: (s.category_ids || []).map(String),
-      capabilities: undefined,
-      version: undefined,
-      createdAt: s.listed_at ? Math.floor(new Date(s.listed_at).getTime() / 1000) : 0,
-      source: sourceName,
-    }))
+    .map(s => {
+      const pm = s.protocol === 'X402' ? ['x402'] : ['l402']
+      return {
+        id: 'satring-' + (s.slug || s.name),
+        pubkey: '',
+        identifier: s.slug || s.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        name: s.name,
+        url: s.url,
+        about: s.description || '',
+        picture: s.logo_url || undefined,
+        pricing: (s.endpoints || [])
+          .filter(e => e.pricing)
+          .map(e => ({
+            capability: e.method + ' ' + (e.url || '').split('?')[0],
+            price: e.pricing?.amount || 0,
+            currency: e.pricing?.currency || 'sats',
+          }))
+          .slice(0, 5),
+        paymentMethods: pm,
+        paymentMethodDetails: pm.map(m => [m]),
+        topics: (s.category_ids || []).map(String),
+        capabilities: undefined,
+        version: undefined,
+        createdAt: s.listed_at ? Math.floor(new Date(s.listed_at).getTime() / 1000) : 0,
+        source: sourceName,
+        trustTier: TIER_DISCOVERED,
+        eventSource: 'directory',
+        verified: undefined,
+        status: 'active',
+      }
+    })
 }
 
 /**
@@ -939,11 +1382,16 @@ function parseL402DirectoryServices(data, sourceName) {
           }))
           .slice(0, 5),
         paymentMethods: ['l402'],
+        paymentMethodDetails: [['l402']],
         topics: (s.categories || []).filter(c => typeof c === 'string'),
         capabilities: undefined,
         version: undefined,
         createdAt: s.listed_at ? Math.floor(new Date(s.listed_at).getTime() / 1000) : 0,
         source: sourceName,
+        trustTier: TIER_DISCOVERED,
+        eventSource: 'directory',
+        verified: undefined,
+        status: 'active',
       }
     })
     .filter(Boolean)
@@ -969,22 +1417,38 @@ document.getElementById('search').addEventListener('input', (e) => {
   btn.setAttribute('aria-expanded', 'false')
   btn.addEventListener('click', () => {
     const pills = toolbar.querySelectorAll('.filter-pills')
+    const filterRows = toolbar.querySelectorAll('.filter-row')
     const showing = pills[0] && pills[0].classList.contains('show-mobile')
     pills.forEach(p => p.classList.toggle('show-mobile', !showing))
+    filterRows.forEach(r => r.classList.toggle('show-mobile', !showing))
     btn.classList.toggle('active', !showing)
     btn.setAttribute('aria-expanded', String(!showing))
     btn.textContent = showing ? 'Filters' : 'Hide filters'
   })
-  toolbar.insertBefore(btn, toolbar.querySelector('.filter-pills'))
+  toolbar.insertBefore(btn, toolbar.querySelector('.filter-row') || toolbar.querySelector('.filter-pills'))
 })()
 
-// Delegated click handler for filter pills (payment + topic)
+// Delegated click handler for filter pills (payment, topic, rail, tier)
 // Pills are matched by data-filter attribute, set during buildPillGroup.
 document.addEventListener('click', (e) => {
   const pill = e.target.closest('[data-filter]')
   if (!pill) return
 
   const { filter, value } = pill.dataset
+
+  // Exclusive (radio) filters
+  if (filter === 'rail') {
+    activeRailFilter = value
+    renderServices()
+    return
+  }
+  if (filter === 'tier') {
+    activeTierFilter = value
+    renderServices()
+    return
+  }
+
+  // Toggle (checkbox) filters
   const set = filter === 'payment' ? activePaymentFilters : activeTopicFilters
 
   if (set.has(value)) {
@@ -1128,18 +1592,32 @@ function updateHeroStats() {
   const serviceCountEl = document.getElementById('hero-service-count')
   if (serviceCountEl) serviceCountEl.textContent = allServices.length
 
-  // Unique payment rail count (distinct pmi values across all services)
-  const railCountEl = document.getElementById('hero-rail-count')
-  if (railCountEl) {
-    const uniqueRails = new Set(allServices.flatMap(s => s.paymentMethods))
-    railCountEl.textContent = uniqueRails.size
-  }
+  // Payment rails breakdown
+  const l402Count = allServices.filter(s => s.paymentMethods.includes('l402') || s.paymentMethods.includes('bitcoin-lightning-bolt11')).length
+  const x402Count = allServices.filter(s => s.paymentMethods.includes('x402')).length
+  const cashuCount = allServices.filter(s => s.paymentMethods.includes('cashu') || s.paymentMethods.includes('xcashu') || s.paymentMethods.includes('bitcoin-cashu-xcashu')).length
+
+  const l402CountEl = document.getElementById('hero-l402-count')
+  if (l402CountEl) l402CountEl.textContent = l402Count
+
+  const x402CountEl = document.getElementById('hero-x402-count')
+  if (x402CountEl) x402CountEl.textContent = x402Count
+
+  const cashuCountEl = document.getElementById('hero-cashu-count')
+  if (cashuCountEl) cashuCountEl.textContent = cashuCount
 
   // Connected relay count
   const relayCountEl = document.getElementById('hero-relay-count')
   if (relayCountEl) {
     const connected = [...relays.values()].filter(r => r.status === 'connected').length
     relayCountEl.textContent = connected
+  }
+
+  // Last updated timestamp
+  const lastUpdatedEl = document.getElementById('hero-last-updated')
+  if (lastUpdatedEl) {
+    lastUpdatedEl.textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    lastUpdatedEl.title = new Date().toISOString()
   }
 }
 

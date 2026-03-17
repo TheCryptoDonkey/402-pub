@@ -38,14 +38,23 @@
           <span class="stat-label">services</span>
         </div>
         <div class="hero-stat">
-          <span class="stat-value" id="hero-rail-count">0</span>
-          <span class="stat-label">rails</span>
+          <span class="stat-value" id="hero-l402-count">0</span>
+          <span class="stat-label">L402</span>
+        </div>
+        <div class="hero-stat">
+          <span class="stat-value" id="hero-x402-count">0</span>
+          <span class="stat-label">x402</span>
+        </div>
+        <div class="hero-stat">
+          <span class="stat-value" id="hero-cashu-count">0</span>
+          <span class="stat-label">Cashu</span>
         </div>
         <div class="hero-stat">
           <span class="stat-value" id="hero-relay-count">0</span>
           <span class="stat-label">relays</span>
         </div>
       </div>
+      <div class="hero-updated" id="hero-last-updated" aria-live="polite"></div>
 
       <div class="hero-ctas">
         <a href="#card-operator" class="btn btn-primary" id="cta-operator">I run an API</a>
@@ -102,6 +111,10 @@
       <div class="toolbar-filters">
         <label for="search" class="sr-only">Search services</label>
         <input type="search" id="search" placeholder="Search services..." autocomplete="off" aria-label="Search services">
+        <div class="filter-row">
+          <div id="rail-filters" class="filter-pills" role="group" aria-label="Filter by payment rail"></div>
+          <div id="tier-filters" class="filter-pills" role="group" aria-label="Filter by trust tier"></div>
+        </div>
         <div id="payment-filters" class="filter-pills" role="group" aria-label="Filter by payment method"></div>
         <div id="topic-filters" class="filter-pills" role="group" aria-label="Filter by topic"></div>
       </div>
