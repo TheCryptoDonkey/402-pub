@@ -733,6 +733,63 @@ main {
   border-color: #d97706;
 }
 
+/* Topic pills — smaller than rail/tier pills to reduce visual weight */
+#topic-filters .pill,
+#payment-filters .pill {
+  padding: 0.35rem 0.85rem;
+  font-size: 0.82rem;
+}
+
+/* "+N more" / "Show less" pill for collapsed topic filters */
+.pill.pill-more {
+  border-style: dashed;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.pill.pill-more:hover {
+  color: var(--accent-amber);
+  border-color: var(--accent-amber-dim);
+}
+
+/* ============================================================
+   Load More Button
+   ============================================================ */
+
+.load-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.5rem 0;
+}
+
+.btn-load-more {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.65rem 2rem;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-family: var(--font-body);
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--accent-amber-dim);
+  background: transparent;
+  color: var(--accent-amber);
+  transition: all 0.2s;
+}
+
+.btn-load-more:hover {
+  background: var(--accent-amber-dim);
+  border-color: var(--accent-amber);
+}
+
+.load-more-info {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+}
+
 /* ============================================================
    Services Grid
    ============================================================ */

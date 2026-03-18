@@ -35,6 +35,12 @@ const RECONNECT_MAX = 30_000
 /** Maximum number of services to store (prevents memory exhaustion from relay flood) */
 const MAX_SERVICES = 2000
 
+/** Number of service cards to render per page */
+const PAGE_SIZE = 50
+
+/** Maximum topic pills visible before collapsing behind "+N more" */
+const MAX_VISIBLE_TOPICS = 8
+
 /** 402.pub indexer pubkey — events from this key are "discovered", not self-announced */
 const INDEXER_PUBKEY = '7ff69c072127407d7b56712c407e6a95cababdb8c934e49aef869f08b238d898'
 
@@ -379,6 +385,15 @@ let activeRailFilter = 'all'   // 'all', 'l402', 'x402', 'cashu'
 let activeTierFilter = 'all'   // 'all', 'self', 'discovered'
 let activeTransportFilter = 'all' // 'all', 'https', 'http', 'onion', 'hns'
 
+/** Number of cards currently visible (pagination) */
+let visibleCount = PAGE_SIZE
+
+/** Cached service count — used to avoid rebuilding filter pills unnecessarily */
+let lastPillServiceCount = -1
+
+/** Whether topic pills are expanded (showing all) or collapsed */
+let topicPillsExpanded = false
+
 /**
  * Rebuilds the relay status row in the header.
  * Each relay gets a coloured dot + text label (colour-blind safe).
@@ -449,8 +464,11 @@ function renderServices() {
   const emptyState = document.getElementById('empty-state')
   const allServices = [...services.values()]
 
-  // Rebuild filter pills based on all available services
-  renderFilterPills(allServices)
+  // Only rebuild filter pills when the service set has changed
+  if (allServices.length !== lastPillServiceCount) {
+    lastPillServiceCount = allServices.length
+    renderFilterPills(allServices)
+  }
 
   // Apply search query
   let filtered = allServices
@@ -522,15 +540,20 @@ function renderServices() {
   // Show empty state if filters produced no results but services exist
   if (filtered.length === 0 && allServices.length > 0) {
     grid.textContent = ''
+    removeLoadMore()
     emptyState.hidden = false
     return
   }
 
   emptyState.hidden = true
 
+  // Paginate: only render up to visibleCount cards
+  const page = filtered.slice(0, visibleCount)
+  const remaining = filtered.length - page.length
+
   // Build cards via safe DOM fragment
   const fragment = document.createDocumentFragment()
-  filtered.forEach(s => {
+  page.forEach(s => {
     const card = buildCard(s)
 
     // Flash new services (from Nostr or external sources)
@@ -551,6 +574,9 @@ function renderServices() {
   grid.textContent = ''
   grid.appendChild(fragment)
 
+  // Show or update "Load more" button
+  renderLoadMore(remaining, filtered.length)
+
   // Attach clipboard handlers to "Copy" buttons
   grid.querySelectorAll('.copy-pubkey').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -569,6 +595,46 @@ function renderServices() {
 
   // Update hero stat pills
   updateHeroStats()
+}
+
+/**
+ * Renders or updates the "Load more" button below the services grid.
+ * Removed when all services are visible or no matches.
+ *
+ * @param {number} remaining - Number of services not yet rendered
+ * @param {number} total - Total filtered services
+ */
+function renderLoadMore(remaining, total) {
+  removeLoadMore()
+  if (remaining <= 0) return
+
+  const container = document.createElement('div')
+  container.id = 'load-more'
+  container.className = 'load-more'
+
+  const btn = document.createElement('button')
+  btn.className = 'btn-load-more'
+  const next = Math.min(remaining, PAGE_SIZE)
+  btn.textContent = 'Show ' + next + ' more'
+  btn.addEventListener('click', () => {
+    visibleCount += PAGE_SIZE
+    renderServices()
+  })
+  container.appendChild(btn)
+
+  const info = document.createElement('span')
+  info.className = 'load-more-info'
+  info.textContent = 'Showing ' + (total - remaining) + ' of ' + total
+  container.appendChild(info)
+
+  const grid = document.getElementById('services-grid')
+  grid.parentNode.insertBefore(container, grid.nextSibling)
+}
+
+/** Removes the load-more button if present. */
+function removeLoadMore() {
+  const el = document.getElementById('load-more')
+  if (el) el.remove()
 }
 
 /**
@@ -942,13 +1008,57 @@ function renderFilterPills(allServices) {
     formatPaymentMethod
   )
 
-  buildPillGroup(
-    document.getElementById('topic-filters'),
-    allTopics,
-    activeTopicFilters,
-    'topic',
-    t => t
-  )
+  // Topic pills — show top N by frequency, collapse the rest
+  const topicContainer = document.getElementById('topic-filters')
+  if (allTopics.length > 0) {
+    // Count services per topic
+    const topicCounts = new Map()
+    allTopics.forEach(t => topicCounts.set(t, 0))
+    allServices.forEach(s => s.topics.forEach(t => {
+      if (topicCounts.has(t)) topicCounts.set(t, topicCounts.get(t) + 1)
+    }))
+
+    // Sort by frequency (descending), then alphabetically
+    const sorted = [...topicCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+
+    const shouldCollapse = sorted.length > MAX_VISIBLE_TOPICS && !topicPillsExpanded
+    const visible = shouldCollapse ? sorted.slice(0, MAX_VISIBLE_TOPICS) : sorted
+    const hiddenCount = sorted.length - MAX_VISIBLE_TOPICS
+
+    topicContainer.textContent = ''
+    visible.forEach(([topic, count]) => {
+      const btn = document.createElement('button')
+      btn.className = 'pill' + (activeTopicFilters.has(topic) ? ' active' : '')
+      btn.dataset.filter = 'topic'
+      btn.dataset.value = topic
+      btn.setAttribute('aria-pressed', String(activeTopicFilters.has(topic)))
+      btn.textContent = topic + ' (' + count + ')'
+      topicContainer.appendChild(btn)
+    })
+
+    if (shouldCollapse && hiddenCount > 0) {
+      const more = document.createElement('button')
+      more.className = 'pill pill-more'
+      more.textContent = '+' + hiddenCount + ' more'
+      more.addEventListener('click', () => {
+        topicPillsExpanded = true
+        renderFilterPills(allServices)
+      })
+      topicContainer.appendChild(more)
+    } else if (topicPillsExpanded && sorted.length > MAX_VISIBLE_TOPICS) {
+      const less = document.createElement('button')
+      less.className = 'pill pill-more'
+      less.textContent = 'Show less'
+      less.addEventListener('click', () => {
+        topicPillsExpanded = false
+        renderFilterPills(allServices)
+      })
+      topicContainer.appendChild(less)
+    }
+  } else {
+    topicContainer.textContent = ''
+  }
 }
 
 /**
@@ -1790,10 +1900,16 @@ function parseAgentCommerceServices(data, sourceName) {
    Event Listeners
    ============================================================ */
 
-// Live search — re-render on every keystroke
+// Debounced search — avoids re-rendering 1000+ cards on every keystroke
+let searchDebounceTimer = null
 document.getElementById('search').addEventListener('input', (e) => {
-  searchQuery = e.target.value.trim()
-  renderServices()
+  const value = e.target.value.trim()
+  clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => {
+    searchQuery = value
+    visibleCount = PAGE_SIZE // Reset pagination on new search
+    renderServices()
+  }, 150)
 })
 
 // Mobile filter toggle — inject button before the filter pills
@@ -1824,6 +1940,9 @@ document.addEventListener('click', (e) => {
   if (!pill) return
 
   const { filter, value } = pill.dataset
+
+  // Reset pagination on any filter change
+  visibleCount = PAGE_SIZE
 
   // Exclusive (radio) filters
   if (filter === 'rail') {
@@ -2061,6 +2180,7 @@ function updateHeroStats() {
     const activate = () => {
       // Toggle: if already selected, deselect (show all)
       activeRailFilter = activeRailFilter === rail ? 'all' : rail
+      visibleCount = PAGE_SIZE
       renderServices()
     }
 
