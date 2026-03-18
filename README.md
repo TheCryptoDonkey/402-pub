@@ -2,7 +2,7 @@
 
 **The open marketplace for paid APIs.** Discover services on Nostr, pay with L402, x402, or Cashu — no registry, no API keys, no gatekeepers.
 
-[402.pub](https://402.pub/) is a live directory that streams [kind 31402](https://github.com/TheCryptoDonkey/402-announce) service announcements from Nostr relays in real time. It also indexes external directories like [l402.directory](https://l402.directory/) so you get a single view of the entire L402 ecosystem.
+[402.pub](https://402.pub/) is a live directory that streams [kind 31402](https://github.com/forgesworn/402-announce) service announcements from Nostr relays in real time. It also indexes external directories like [l402.directory](https://l402.directory/) so you get a single view of the entire L402 ecosystem.
 
 ![402.pub social preview](social-preview.png)
 
@@ -16,9 +16,9 @@ Gate any HTTP endpoint behind a paywall in a few lines of code. Announce it on N
 npm i @thecryptodonkey/toll-booth
 ```
 
-- [toll-booth](https://github.com/TheCryptoDonkey/toll-booth) — L402 paywall middleware for Express, Hono, or any HTTP framework
-- [402-announce](https://github.com/TheCryptoDonkey/402-announce) — publish your service on Nostr for decentralised discovery
-- [toll-booth-announce](https://github.com/TheCryptoDonkey/toll-booth-announce) — one-line bridge from your toll-booth config to Nostr
+- [toll-booth](https://github.com/forgesworn/toll-booth) — L402 paywall middleware for Express, Hono, or any HTTP framework
+- [402-announce](https://github.com/forgesworn/402-announce) — publish your service on Nostr for decentralised discovery
+- [toll-booth-announce](https://github.com/forgesworn/toll-booth-announce) — one-line bridge from your toll-booth config to Nostr
 
 ### I build agents
 
@@ -28,7 +28,7 @@ Give your AI agent a wallet. It discovers paid APIs on Nostr, pays with L402, x4
 npx 402-mcp
 ```
 
-- [402-mcp](https://github.com/TheCryptoDonkey/402-mcp) — MCP server that lets AI agents discover, pay for, and consume L402 APIs autonomously
+- [402-mcp](https://github.com/forgesworn/402-mcp) — MCP server that lets AI agents discover, pay for, and consume L402 APIs autonomously
 
 ## How it works
 
@@ -69,10 +69,10 @@ favicon.*           Favicon set (ICO, SVG, PNG sizes)
 
 | Package | Purpose |
 |---------|---------|
-| [toll-booth](https://github.com/TheCryptoDonkey/toll-booth) | L402 paywall middleware |
-| [402-announce](https://github.com/TheCryptoDonkey/402-announce) | Nostr service announcements |
-| [toll-booth-announce](https://github.com/TheCryptoDonkey/toll-booth-announce) | Config-to-Nostr bridge |
-| [402-mcp](https://github.com/TheCryptoDonkey/402-mcp) | AI agent MCP client |
+| [toll-booth](https://github.com/forgesworn/toll-booth) | L402 paywall middleware |
+| [402-announce](https://github.com/forgesworn/402-announce) | Nostr service announcements |
+| [toll-booth-announce](https://github.com/forgesworn/toll-booth-announce) | Config-to-Nostr bridge |
+| [402-mcp](https://github.com/forgesworn/402-mcp) | AI agent MCP client |
 
 ## Licence
 

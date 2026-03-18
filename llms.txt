@@ -16,7 +16,7 @@ AI agents and other discovery pages can consume 402.pub's aggregated data:
 
 - **JavaScript API**: Call `window.get402Services()` from the page for structured JSON
 - **Download**: Click "Download services.json" in the footer for a snapshot
-- **MCP**: Use [402-mcp](https://github.com/TheCryptoDonkey/402-mcp) (`npx 402-mcp`) for native tool-based access
+- **MCP**: Use [402-mcp](https://github.com/forgesworn/402-mcp) (`npx 402-mcp`) for native tool-based access
 - **Direct Nostr**: Subscribe to `kind: 31402` on relays listed below
 
 ## Data Sources
@@ -50,16 +50,16 @@ Each service listing includes:
 Gate any HTTP endpoint behind a paywall using toll-booth middleware, then announce
 it on Nostr with 402-announce. Your service appears on 402.pub automatically.
 
-- [toll-booth](https://github.com/TheCryptoDonkey/toll-booth) — L402 paywall middleware for Express, Hono, or any HTTP framework
-- [402-announce](https://github.com/TheCryptoDonkey/402-announce) — Publish services on Nostr (kind 31402)
-- [toll-booth-announce](https://github.com/TheCryptoDonkey/toll-booth-announce) — Bridge from toll-booth config to Nostr
+- [toll-booth](https://github.com/forgesworn/toll-booth) — L402 paywall middleware for Express, Hono, or any HTTP framework
+- [402-announce](https://github.com/forgesworn/402-announce) — Publish services on Nostr (kind 31402)
+- [toll-booth-announce](https://github.com/forgesworn/toll-booth-announce) — Bridge from toll-booth config to Nostr
 
 ## For Agent Builders
 
 Give your AI agent a wallet with 402-mcp. It discovers paid APIs on Nostr, pays
 with L402, x402, or Cashu, caches credentials, and tracks spend with safety limits.
 
-- [402-mcp](https://github.com/TheCryptoDonkey/402-mcp) — MCP server for autonomous API discovery and payment
+- [402-mcp](https://github.com/forgesworn/402-mcp) — MCP server for autonomous API discovery and payment
 
 ## Key Concepts
 

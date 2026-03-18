@@ -19,7 +19,7 @@
   "homepage": "https://402.pub/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/TheCryptoDonkey/402-pub.git"
+    "url": "https://github.com/forgesworn/402-pub.git"
   },
   "license": "MIT",
   "private": true
