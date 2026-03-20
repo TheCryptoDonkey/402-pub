@@ -1,5 +1,7 @@
 # 402.pub
 
+**Nostr:** [`npub1mgvlrnf5hm9yf0n5mf9nqmvarhvxkc6remu5ec3vf8r0txqkuk7su0e7q2`](https://njump.me/npub1mgvlrnf5hm9yf0n5mf9nqmvarhvxkc6remu5ec3vf8r0txqkuk7su0e7q2)
+
 **The open marketplace for paid APIs.** Discover services on Nostr, pay with L402, x402, or Cashu — no registry, no API keys, no gatekeepers.
 
 [402.pub](https://402.pub/) is a live directory that streams [kind 31402](https://github.com/forgesworn/402-announce) service announcements from Nostr relays in real time. It also indexes external directories like [l402.directory](https://l402.directory/) so you get a single view of the entire L402 ecosystem.
